@@ -7,7 +7,7 @@ using FiatUconnect.HA;
 using Flurl.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Newtonsoft.Json.Linq;
+using Newtonsoft.Json;
 using Serilog;
 using Serilog.Events;
 
@@ -23,8 +23,8 @@ builder.Services.AddOptions<AppConfig>()
 var app = builder.Build();
 
 var persistentHaEntities = new ConcurrentDictionary<string, DateTime>();
-var vinCharging = new  HashSet<string>();
-var vinPlugged = new  HashSet<string>();
+var vinCharging = new HashSet<string>();
+var vinPlugged = new HashSet<string>();
 
 
 var appConfig = builder.Configuration.Get<AppConfig>();
@@ -40,6 +40,7 @@ Log.Logger = new LoggerConfiguration()
 Log.Information("Delay start for seconds: {0}", appConfig.StartDelaySeconds);
 await Task.Delay(TimeSpan.FromSeconds(appConfig.StartDelaySeconds));
 
+Console.WriteLine(JsonConvert.SerializeObject(appConfig));
 
 await app.RunAsync(async (CoconaAppContext ctx) =>
 {
@@ -53,21 +54,21 @@ await app.RunAsync(async (CoconaAppContext ctx) =>
     await mqttClient.Connect();
 
 
-_ = Task.Run(async () =>
-    {
+    _ = Task.Run(async () =>
+        {
             while (!ctx.CancellationToken.IsCancellationRequested)
             {
                 if (!ctx.CancellationToken.IsCancellationRequested && appConfig.AutoDeepRefresh && vinCharging.Any())
                 {
                     Log.Information("AutoDeepRefresh");
-                    foreach(string vin in vinCharging) { await TrySendCommand(fiatClient, FiatCommand.DEEPREFRESH, vin); }
+                    foreach (string vin in vinCharging) { await TrySendCommand(fiatClient, FiatCommand.DEEPREFRESH, vin); }
                     await Task.Delay(TimeSpan.FromSeconds(6), ctx.CancellationToken);
                     Log.Information("AutoDeepRefresh COMPLETED. Next update in {0} minutes.", appConfig.AutoDeepInterval);
                     forceLoopResetEvent.Set();
                 }
-                WaitHandle.WaitAny(new[] { ctx.CancellationToken.WaitHandle ,forceLoopDeepEvent }, TimeSpan.FromMinutes(appConfig.AutoDeepInterval));
+                WaitHandle.WaitAny(new[] { ctx.CancellationToken.WaitHandle, forceLoopDeepEvent }, TimeSpan.FromMinutes(appConfig.AutoDeepInterval));
             }
-    });
+        });
 
 
     while (!ctx.CancellationToken.IsCancellationRequested)
@@ -83,7 +84,7 @@ _ = Task.Run(async () =>
             foreach (var vehicle in await fiatClient.Fetch())
             {
                 Log.Information($"Found : {vehicle.Nickname} {vehicle.Vin} {vehicle.ModelDescription}");
-              
+
                 var haDevice = new HaDevice()
                 {
                     Name = string.IsNullOrEmpty(vehicle.Nickname) ? vehicle.Vin : vehicle.Nickname,
@@ -94,8 +95,8 @@ _ = Task.Run(async () =>
                 };
 
                 IEnumerable<HaEntity> haEntities = await GetHaEntities(haClient, mqttClient, vehicle, haDevice);
-              
-                if (persistentHaEntities.TryAdd(vehicle.Vin,DateTime.Now))
+
+                if (persistentHaEntities.TryAdd(vehicle.Vin, DateTime.Now))
                 {
                     Log.Information("Pushing new sensors to Home Assistant");
                     await Parallel.ForEachAsync(haEntities, async (sensor, token) => { await sensor.Announce(); });
@@ -109,7 +110,7 @@ _ = Task.Run(async () =>
                 await Parallel.ForEachAsync(haEntities, async (sensor, token) => { await sensor.PublishState(); });
 
                 var lastUpdate = new HaSensor(mqttClient, "LastUpdate", haDevice, false) { Value = DateTime.Now.ToString("dd/MM HH:mm:ss") };
-                
+
                 await lastUpdate.Announce();
                 await lastUpdate.PublishState();
             }
@@ -134,7 +135,7 @@ _ = Task.Run(async () =>
         Log.Information("Fetching COMPLETED. Next update in {0} minutes.", appConfig.RefreshInterval);
 
         WaitHandle.WaitAny(new[] { ctx.CancellationToken.WaitHandle, forceLoopResetEvent }, TimeSpan.FromMinutes(appConfig.RefreshInterval));
-  
+
 
     }
 });
@@ -158,7 +159,7 @@ async Task<bool> TrySendCommand(FiatClient fiatClient, FiatCommand command, stri
     }
     catch (Exception e)
     {
-        Log.Error("Command: {0} ERROR : {1}", command.Message,e.Message);
+        Log.Error("Command: {0} ERROR : {1}", command.Message, e.Message);
         Log.Debug("{0}", e);
         return false;
     }
@@ -249,12 +250,12 @@ IEnumerable<HaEntity> CreateInteractiveEntities(CoconaAppContext ctx, FiatClient
 
 async Task<IEnumerable<HaEntity>> GetHaEntities(HaRestApi haClient, SimpleMqttClient mqttClient, Vehicle vehicle, HaDevice haDevice)
 {
-     var compactDetails = vehicle.Details.Compact("");
+    var compactDetails = vehicle.Details.Compact("");
 
     bool charging = false;
     string charginglevel = "battery_timetofullychargel2";
     string batteryPluginstatus = "battery_pluginstatus";
-    
+
     DateTime refChargeEndTime = DateTime.Now;
 
     List<HaEntity> haEntities = compactDetails.Select(detail =>
@@ -343,7 +344,7 @@ async Task<IEnumerable<HaEntity>> GetHaEntities(HaRestApi haClient, SimpleMqttCl
     else
     {
         vinPlugged.Remove(vehicle.Vin);
-    } 
+    }
 
     var textChargeDuration = "0";
     var textChargeEndTime = "00:00";
@@ -366,13 +367,13 @@ async Task<IEnumerable<HaEntity>> GetHaEntities(HaRestApi haClient, SimpleMqttCl
 
     haEntities.Add(new HaSensor(mqttClient, "Charge_Duration", haDevice, false)
     {
-      //  DeviceClass = "duration",
+        //  DeviceClass = "duration",
         Value = textChargeDuration,
     });
 
     haEntities.Add(new HaSensor(mqttClient, "Charge_Endtime", haDevice, false)
     {
-      //  DeviceClass = "duration",
+        //  DeviceClass = "duration",
         Value = textChargeEndTime,
     });
 
